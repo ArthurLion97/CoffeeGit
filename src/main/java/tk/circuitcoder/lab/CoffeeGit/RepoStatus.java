@@ -15,8 +15,8 @@ public enum RepoStatus {
 	REBASED(false,true,"Rebase completed"),
 	PULLED(false,true,"Pull completed"),
 	
-	CONFLICT(true,true,"An merge/pull conflict has occured. Click for more detail."),
-	UNKNOW(true,true,"An unknow error has occured. Click for more detail.");
+	CONFLICT(true,true,"An merge/pull conflict has occurred. Click for more detail."),
+	UNKNOW(true,true,"An unknow error has occurred. Click for more detail.");
 	
 	private boolean e;
 	private boolean i;

@@ -1,53 +1,23 @@
 package tk.circuitcoder.lab.CoffeeGit;
 
-import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
-import java.rmi.server.RMIClassLoader;
 import java.util.Collection;
-import java.util.EventListener;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import javax.swing.event.EventListenerList;
-
-import org.eclipse.jgit.api.AddCommand;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.MergeResult;
-import org.eclipse.jgit.api.PullCommand;
-import org.eclipse.jgit.api.RebaseResult;
+import org.eclipse.jgit.api.*;
 import org.eclipse.jgit.api.MergeResult.MergeStatus;
-import org.eclipse.jgit.api.PullResult;
-import org.eclipse.jgit.api.errors.CanceledException;
-import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
-import org.eclipse.jgit.api.errors.DetachedHeadException;
-import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.api.errors.InvalidConfigurationException;
-import org.eclipse.jgit.api.errors.InvalidRemoteException;
-import org.eclipse.jgit.api.errors.NoFilepatternException;
-import org.eclipse.jgit.api.errors.NoHeadException;
-import org.eclipse.jgit.api.errors.NoMessageException;
-import org.eclipse.jgit.api.errors.RefNotFoundException;
-import org.eclipse.jgit.api.errors.UnmergedPathsException;
-import org.eclipse.jgit.api.errors.WrongRepositoryStateException;
+import org.eclipse.jgit.api.errors.*;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.errors.NotSupportedException;
 import org.eclipse.jgit.errors.TransportException;
-import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.ProgressMonitor;
-import org.eclipse.jgit.lib.Ref;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.lib.RepositoryBuilder;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.transport.FetchConnection;
-import org.eclipse.jgit.transport.FetchResult;
-import org.eclipse.jgit.transport.PushResult;
-import org.eclipse.jgit.transport.RefSpec;
-import org.eclipse.jgit.transport.Transport;
+import org.eclipse.jgit.lib.*;
+import org.eclipse.jgit.revwalk.*;
+import org.eclipse.jgit.transport.*;
 
 public class Repo {
 	private Repository repo;
@@ -152,7 +122,7 @@ public class Repo {
 		return fc.getRefsMap();
 	}
 	
-	public DirCache doAdd(Collection<String> patterns) throws NoFilepatternException, GitAPIException {
+	public DirCache doAdd(Collection<String> patterns) throws NoFilepatternException, GitAPIException  {
 		AddCommand ac=git.add();
 		for(String p:patterns) {
 			ac.addFilepattern(p);
@@ -160,8 +130,56 @@ public class Repo {
 		return ac.call();
 	}
 	
+	public RepoStatus AddCommand(Collection<String> patterns) {
+		DirCache dc;
+		try {
+			dc=doAdd(patterns);
+		} catch (GitAPIException e) {
+			status=RepoStatus.UNKNOW;
+			statusLine="An error has occurred while adding resources. Click for more detail.";
+			errno="Add Error, Error stack:\n"+e.getLocalizedMessage();
+			e.printStackTrace();
+			return status;
+		}
+		
+		status=RepoStatus.FINE;
+		RevCommit c;
+		try {
+			c = new RevWalk(repo).parseCommit(repo.getRef("HEAD").getObjectId());
+		} catch (IOException e) {
+			status=RepoStatus.UNKNOW;
+			statusLine="An error has occurred while adding resources. Click for more detail.";
+			errno="Add Error, Error stack:\n"+e.getLocalizedMessage();
+			e.printStackTrace();
+			return status;
+		}
+		statusLine=c.getId().getName()+"    "+c.getShortMessage();
+		errno="Add Completed.\nFile Count: "+dc.getEntryCount();
+		//TODO: file tree
+		notifyActionListeners(RepoAction.ADD,null);
+		return status;
+	}
+	
 	public RevCommit doCommit(PersonIdent author,PersonIdent committer,String message) throws NoHeadException, NoMessageException, UnmergedPathsException, ConcurrentRefUpdateException, WrongRepositoryStateException, GitAPIException {
 		return git.commit().setAuthor(author).setCommitter(committer).setMessage(message).call();
+	}
+	
+	public RepoStatus commit(PersonIdent author,PersonIdent committer,String message) {
+		RevCommit c;
+		try {
+			c=doCommit(author, committer, message);
+		} catch (GitAPIException e) {
+			status=RepoStatus.UNKNOW;
+			statusLine="An error has occurred while committing. Click for more detail.";
+			errno="Commit Error, Error stack:\n"+e.getLocalizedMessage();
+			e.printStackTrace();
+			return status;
+		}
+		statusLine=c.getId().getName()+"    "+c.getShortMessage();
+		errno="Commit Completed.\nNew Head: "+c.getId().getName()+"    "+c.getShortMessage();
+		
+		notifyActionListeners(RepoAction.COMMIT,null);
+		return (status=RepoStatus.FINE);
 	}
 	
 	public MergeResult doMerge(String ref) throws GitAPIException, IOException {
@@ -178,10 +196,12 @@ public class Repo {
 			e.printStackTrace();
 			return status;
 		}
-		return processMergeResult(mr);
+		RepoStatus rs=processMergeResult(mr);
+		notifyActionListeners(RepoAction.MERGE,mr);
+		return rs;
 	}
 	
-	public FetchResult doFetch(String remote,List<RefSpec> specs,ProgressMonitor pm) throws URISyntaxException, IOException, InvalidRemoteException, GitAPIException {
+	public FetchResult doFetch(String remote,List<RefSpec> specs,ProgressMonitor pm) throws InvalidRemoteException, org.eclipse.jgit.api.errors.TransportException, GitAPIException {
 		if(pm==null) return git.fetch().setRemote(remote).setRefSpecs(specs).call();
 		else return git.fetch().setRemote(remote).setRefSpecs(specs).setProgressMonitor(pm).call();
 	}
@@ -191,7 +211,7 @@ public class Repo {
 		FetchResult fr;
 		try {
 			fr = doFetch(remote, specs, pm);
-		} catch (URISyntaxException | IOException | GitAPIException e) {
+		} catch (GitAPIException e) {
 			status=RepoStatus.UNKNOW;
 			errno=e.getLocalizedMessage();
 			e.printStackTrace();
@@ -199,10 +219,12 @@ public class Repo {
 		}
 		status=RepoStatus.FETCHED;
 		errno=fr.getMessages();
+		notifyActionListeners(RepoAction.FETCH,fr);
 		return status;
 	}
 	
-	public PullResult doPull(String remote,String branch,ProgressMonitor pm,boolean useRebase) throws WrongRepositoryStateException, InvalidConfigurationException, DetachedHeadException, InvalidRemoteException, CanceledException, RefNotFoundException, NoHeadException, org.eclipse.jgit.api.errors.TransportException, GitAPIException {
+	public PullResult doPull(String remote,String branch,ProgressMonitor pm,boolean useRebase)
+			throws WrongRepositoryStateException, InvalidConfigurationException, DetachedHeadException, InvalidRemoteException, CanceledException, RefNotFoundException, NoHeadException, org.eclipse.jgit.api.errors.TransportException, GitAPIException{
 		PullCommand pc=git.pull().setRemote(remote).setRemoteBranchName(branch);
 		if(pm!=null) pc.setProgressMonitor(pm);
 		if(useRebase) pc.setRebase(true);
@@ -220,17 +242,23 @@ public class Repo {
 			e.printStackTrace();
 			return status;
 		}
-		if(useRebase) return processRebaseResult(pr.getRebaseResult());
-		else return processMergeResult(pr.getMergeResult());
+		RepoStatus rs;
+		if(useRebase) rs=processRebaseResult(pr.getRebaseResult());
+		else rs=processMergeResult(pr.getMergeResult());
+		
+		notifyActionListeners(RepoAction.PULL,pr);
+		return rs;
 	}
 	
-	public Iterable<PushResult> doPush(String remote,List<RefSpec> specs,ProgressMonitor pm) throws InvalidRemoteException, org.eclipse.jgit.api.errors.TransportException, GitAPIException {
+	public Iterable<PushResult> doPush(String remote,List<RefSpec> specs,ProgressMonitor pm) throws InvalidRemoteException, org.eclipse.jgit.api.errors.TransportException, GitAPIException  {
 		if(pm==null) return git.push().setRemote(remote).setRefSpecs(specs).call();
 		else return git.push().setRemote(remote).setRefSpecs(specs).setProgressMonitor(pm).call();
 	}
 	
 	public void push(String remote,List<RefSpec> specs,ProgressMonitor pm) {
+		PushResult pr=null;
 		
+		notifyActionListeners(RepoAction.PUSH,pr);
 	}
 	
 	private RepoStatus processMergeResult(MergeResult mr) {
