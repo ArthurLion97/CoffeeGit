@@ -1,11 +1,18 @@
 package tk.circuitcoder.lab.CoffeeGit;
 
+import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.rmi.server.RMIClassLoader;
 import java.util.Collection;
+import java.util.EventListener;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+
+import javax.swing.event.EventListenerList;
 
 import org.eclipse.jgit.api.AddCommand;
 import org.eclipse.jgit.api.Git;
@@ -43,51 +50,56 @@ import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.Transport;
 
 public class Repo {
-	public static enum RepoStatus {
-		FINE(false,true,"Repository good to go"),
-		UNINITED(false,true,"Repository not initialized"),
-		EMPTY(false,true,"Empty repository"),
-		
-		FETCHING(false,false,"Fetching from remote..."),
-		PUSHING(false,false,"Pulling from remote..."),
-		PULLING(false,false,"Pushing to remote..."),
-		
-		FETCHED(false,true,"Fetch completed"),
-		PUSHED(false,true,"Push completed"),
-		MERGED(false,true,"Merge completed"),
-		PULLED(false,true,"Pull completed"),
-		
-		CONFLICT(true,true,"An merge/pull conflict has occured. Click for more detail."),
-		UNKNOW(true,true,"An unknow error has occured. Click for more detail.");
-		
-		private boolean e;
-		private boolean i;
-		private String dt;
-		private RepoStatus(boolean error,boolean idle,String defaultText) {
-			e=error;
-			i=idle;
-			dt=defaultText;
-		}
-		
-		public boolean isError() {
-			return e;
-		}
-		
-		public boolean isIdle() {
-			return i;
-		}
-		
-		public String getDefaultString() {
-			return dt;
-		}
-	}
-	
 	private Repository repo;
 	private Git git;
 	private RepoStatus status;
 	private String statusLine;
 	private String errno;
 	//TODO: error message dequeue
+	
+	private LinkedList<RepoActionListener> alList;
+	
+	public class RepoEvent {
+		private Repo _r;
+		private RepoStatus _rs;
+		private String _sl;
+		private String _e;
+		private RepoAction _ra;
+		private Object _re;
+		
+		private RepoEvent(Repo r,RepoStatus rs,String sl,String e,RepoAction ra,Object result) {
+			_r=r;
+			_rs=rs;
+			_sl=sl;
+			_e=e;
+			_ra=ra;
+			_re=result;
+		}
+		
+		public Repo getRepo() {
+			return _r;
+		}
+		
+		public RepoStatus getRepoStatus() {
+			return _rs;
+		}
+		
+		public String getStatusLine() {
+			return _sl;
+		}
+		
+		public String getErrno() {
+			return _e;
+		}
+		
+		public RepoAction getAction() {
+			return _ra;
+		}
+		
+		public Object getResult() {
+			return _re;
+		}
+	}
 	
 	public Repo(String dir) throws IOException {
 		RepositoryBuilder rb=CoffeeGit.gerRepositoryBuilder();
@@ -104,6 +116,8 @@ public class Repo {
 		if(!initFlag) status=RepoStatus.UNINITED;
 		if(repo.getRef("refs/HEAD")==null) status=RepoStatus.EMPTY;
 		else status=RepoStatus.FINE;
+		
+		alList=new LinkedList<RepoActionListener>();
 	}
 	
 	public RepoStatus getStatus() {
@@ -270,5 +284,40 @@ public class Repo {
 	private RepoStatus processRebaseResult(RebaseResult rr) {
 		//NOT YET SUPPORTED
 		return status;
+	}
+	
+	public void addActionListener(RepoActionListener listener) {
+		alList.addLast(listener);
+	}
+	
+	public boolean RemoveActionListener(RepoActionListener listener) {
+		return alList.remove(listener);
+	}
+	
+	private void notifyActionListeners(RepoAction a,Object r) {
+		RepoEvent re=new RepoEvent(this,status,statusLine,errno,a,r);
+		Iterator<RepoActionListener> i=alList.iterator();
+		switch(a) {
+		case ADD:
+			while(i.hasNext()) i.next().onAdd(re); break;
+		case CHECKOUT:
+			while(i.hasNext()) i.next().onCheckout(re); break;
+		case COMMIT:
+			while(i.hasNext()) i.next().onCommit(re); break;
+		case FETCH:
+			while(i.hasNext()) i.next().onFetch(re); break;
+		case PULL:
+			while(i.hasNext()) i.next().onPull(re); break;
+		case PUSH:
+			while(i.hasNext()) i.next().onPush(re); break;
+		case RESET:
+			while(i.hasNext()) i.next().onReset(re); break;
+		case REBASE:
+			while(i.hasNext()) i.next().onRebase(re); break;
+		case MERGE:
+			while(i.hasNext()) i.next().onMerge(re); break;
+		case RM:
+			while(i.hasNext()) i.next().onRm(re); break;
+		}
 	}
 }
